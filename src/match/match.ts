@@ -312,6 +312,7 @@ export class Match {
       if (p === taker) continue;
       if (p.human) this.humanMove(p, dt, false);
       else this.aiMove(p, dt);
+      this.integrate(p, dt);
     }
     this.separate();
 
@@ -392,6 +393,7 @@ export class Match {
   // ------------------------------------------------------------------ movement
 
   private integrate(p: Player, dt: number) {
+    p.faceT = Math.max(0, p.faceT - dt);
     p.x = clamp(p.x + p.vx * dt, -4, L + 4);
     p.y = clamp(p.y + p.vy * dt, -3, W + 3);
     const sp = Math.hypot(p.vx, p.vy);
@@ -426,22 +428,39 @@ export class Match {
       p.vx = dvx;
       p.vy = dvy;
     }
-    if (face && Math.hypot(dvx, dvy) > 0.5) [p.fx, p.fy] = snap8(dvx, dvy);
+    if (face && Math.hypot(dvx, dvy) > 0.5) this.face(p, dvx, dvy, p.human || Math.hypot(dvx, dvy) > 2.5);
+  }
+
+  /** Turn to face a direction; computer players can't flick back and forth every frame. */
+  private face(p: Player, x: number, y: number, force: boolean) {
+    const [fx, fy] = snap8(x, y);
+    if (fx === p.fx && fy === p.fy) return;
+    if (!force) {
+      if (p.faceT > 0) return;
+      // ignore small changes so a direction on the boundary doesn't flicker
+      const l = Math.hypot(x, y) || 1;
+      if ((x * p.fx + y * p.fy) / l > 0.82) return;
+    }
+    p.fx = fx;
+    p.fy = fy;
+    p.faceT = 0.5;
   }
 
   private moveTo(p: Player, tx: number, ty: number, speed: number, dt: number) {
     const dx = tx - p.x;
     const dy = ty - p.y;
     const d = Math.hypot(dx, dy);
-    if (d < 0.4) {
+    // arrive and settle; only set off again once the target has moved well away
+    if (p.settled ? d < 1.6 : d < 0.5) {
+      p.settled = true;
       this.steer(p, 0, 0, dt, false);
-      // face the ball when standing
       const bx = this.ball.x - p.x;
       const by = this.ball.y - p.y;
-      if (Math.hypot(bx, by) > 0.5) [p.fx, p.fy] = snap8(bx, by);
+      if (Math.hypot(bx, by) > 2) this.face(p, bx, by, false);
       return;
     }
-    const s = speed * Math.min(1, d / 2);
+    p.settled = false;
+    const s = Math.max(1.5, speed * Math.min(1, d / 2));
     this.steer(p, (dx / d) * s, (dy / d) * s, dt);
   }
 
@@ -562,8 +581,8 @@ export class Match {
       this.kickBall(p, ax * sp, ay * sp, 5 + power * 6.5, power);
     } else {
       const sp = 6 + power * 22;
-      // soft passes stay on the floor; harder ones lift off the ground
-      this.kickBall(p, ax * sp, ay * sp, power > 0.4 ? (power - 0.4) * 9 : 0, power);
+      // only the softest taps stay on the floor; anything harder lifts a little
+      this.kickBall(p, ax * sp, ay * sp, power > 0.15 ? (power - 0.15) * 7 : 0, power);
     }
   }
 
@@ -796,15 +815,71 @@ export class Match {
       this.moveTo(p, tx, ty, p.topSpeed(d > 4, false), dt);
       return;
     }
-    // second man presses the ball carrier a little
-    let [tx, ty] = this.positionTarget(p);
+    let [tx, ty] = this.phase === 'play' && !p.isKeeper ? this.organicTarget(p, dt) : this.positionTarget(p);
     if (p.isKeeper) {
       tx = p.team.goalX + p.team.dir * 1.5;
       ty = MID_Y;
     }
+    if (this.phase !== 'play') {
+      p.runT = 0;
+      p.tgtX = NaN;
+    }
     const d = p.dist(tx, ty);
-    const sp = p.topSpeed(d > 10 && !relaxed, false) * (relaxed ? 0.6 : d > 3 ? 1 : 0.7);
+    const sprint = p.runT > 0 || (d > 10 && !relaxed);
+    const sp = p.topSpeed(sprint, false) * (relaxed ? 0.6 : sprint || d > 3 ? 1 : 0.7);
     this.moveTo(p, tx, ty, sp, dt);
+  }
+
+  /**
+   * Formation spot plus a personal drift, the odd run into space when we have the ball,
+   * and a short reaction lag so the shape breathes instead of moving in lockstep.
+   */
+  private organicTarget(p: Player, dt: number): [number, number] {
+    const t = p.team;
+    const b = this.ball;
+    const poss = b.owner ? b.owner.team === t : b.lastTouch === t;
+    let [tx, ty] = this.positionTarget(p);
+
+    p.wobT -= dt;
+    if (p.wobT <= 0) {
+      p.wobT = 2.5 + rand() * 3.5;
+      p.wobX = (rand() - 0.5) * 8;
+      p.wobY = (rand() - 0.5) * 7;
+    }
+    tx += p.wobX;
+    ty += p.wobY;
+
+    if (p.runT > 0) {
+      p.runT -= dt;
+      if (!poss) p.runT = 0;
+      else return [p.runX, p.runY];
+    } else if (poss && b.owner && b.owner !== p && p !== this.receiver) {
+      const rate = p.idx >= 9 ? 0.4 : p.idx >= 5 ? 0.2 : p.idx === 1 || p.idx === 4 ? 0.07 : 0;
+      const carrier = b.owner;
+      const behindPlay = (p.x - carrier.x) * t.dir < 18;
+      if (behindPlay && rand() < rate * dt) {
+        const goal = t.attackGoalX;
+        p.runX = clamp(Math.max(p.x * t.dir, carrier.x * t.dir) * t.dir + t.dir * (8 + rand() * 14), 6, L - 6);
+        if (t.dir > 0) p.runX = Math.min(p.runX, goal - 6);
+        else p.runX = Math.max(p.runX, goal + 6);
+        if (p.idx >= 9) p.runY = MID_Y + (rand() - 0.5) * 22;
+        else if (p.idx === 1 || p.idx === 4 || p.idx === 5 || p.idx === 8) p.runY = p.y < MID_Y ? 5 + rand() * 8 : W - 5 - rand() * 8;
+        else p.runY = p.y + (rand() - 0.5) * 16;
+        p.runY = clamp(p.runY, 3, W - 3);
+        p.runT = 1.8 + rand() * 1.6;
+        return [p.runX, p.runY];
+      }
+    }
+
+    // reaction lag
+    if (Number.isNaN(p.tgtX)) {
+      p.tgtX = tx;
+      p.tgtY = ty;
+    }
+    const k = Math.min(1, dt * (1 + p.skills.pace / 100));
+    p.tgtX += (tx - p.tgtX) * k;
+    p.tgtY += (ty - p.tgtY) * k;
+    return [p.tgtX, clamp(p.tgtY, 2, W - 2)];
   }
 
   private aiTackle(p: Player, dt: number) {

@@ -298,7 +298,7 @@ function drawPlayer(ctx: CanvasRenderingContext2D, cam: Camera, p: Player, m: Ma
     ctx.drawImage(img, Math.round(s.x - SPR_H / 2), Math.round(s.y - SPR_W - 4));
     return;
   }
-  const moving = Math.hypot(p.vx, p.vy) > 0.4;
+  const moving = Math.hypot(p.vx, p.vy) > 0.8;
   const stumble = p.stun > 0 && p.dive <= 0 && !p.isKeeper ? 1 : 0;
   const px = pixelSet(kit, p.def.skin);
   let headY: number;
