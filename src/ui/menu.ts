@@ -211,16 +211,17 @@ export class Menu {
       ['SPRINT', 'SHIFT / PAD B or RT'],
       ['PAUSE', 'ESC / START'],
       ['', ''],
-      ['PASS', 'LET GO OF KICK. THE DIRECTION'],
+      ['QUICK PASS', 'TAP KICK: TO A TEAM-MATE AHEAD'],
+      ['PASS', 'HOLD KICK, LET GO. THE DIRECTION'],
       ['', 'HELD SETS THE ANGLE'],
       ['CROSS-FIELD', 'PUSH SIDEWAYS WHILE RUNNING'],
       ['LOFT', 'PULL BACK AS YOU KICK'],
-      ['SHOOT', 'KICK AT GOAL. UP/DOWN AIMS'],
+      ['SHOOT', 'HOLD KICK AT GOAL. UP/DOWN AIMS'],
       ['TACKLE', 'KICK NEAR THE MAN ON THE BALL'],
       ['2 PLAYERS', 'P1 WASD+SPACE  P2 ARROWS+ENTER'],
     ];
     lines.forEach(([a, b], i) => {
-      const y = 84 + i * 13;
+      const y = 80 + i * 12;
       drawText(ctx, a, 40, y, '#f2cc1c');
       drawText(ctx, b, 150, y, '#ffffff');
     });

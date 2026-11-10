@@ -24,6 +24,8 @@ Then open the address Vite prints (usually http://localhost:5173).
 
 In 2-player mode player 1 uses WASD + Space + Left Shift and player 2 uses the arrows + Enter + Right Shift. Gamepad 1 and 2 also work.
 
+**Quick pass.** Tap kick and the ball goes to the best-placed team-mate roughly the way you are facing (or pushing). Accuracy and weight depend on the passer's Passing skill. If nobody is there, a tap plays a soft pass instead.
+
 **Kicking.** Hold kick to build power, then let go. With nothing held the ball goes the way you are running. Push sideways while running for a diagonal cross-field ball. Push diagonally back for a square pass. Pull right back to loft the ball forward. Kick toward goal in range to shoot. Up or down aims at the far or near post, and shots drift off line depending on the shooter's skill, the power and how close the nearest defender is. Without the ball, kick next to the man on the ball to tackle, or as a high ball arrives to head it.
 
 ## Build and deploy
