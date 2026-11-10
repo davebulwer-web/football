@@ -113,6 +113,17 @@ export class Player {
   diveDir = 0;
   ignoreBall = 0;
   tackleT = 0;
+  // organic movement
+  settled = false;
+  faceT = 0;
+  wobX = 0;
+  wobY = 0;
+  wobT = 0;
+  runT = 0;
+  runX = 0;
+  runY = 0;
+  tgtX = NaN;
+  tgtY = NaN;
   constructor(team: Team, idx: number, def: PlayerDef) {
     this.team = team;
     this.idx = idx;
