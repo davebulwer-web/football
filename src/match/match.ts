@@ -40,6 +40,8 @@ interface Restart {
 }
 
 const G = 9.8;
+/** Releasing kick before the power bar reaches this is a quick tap pass. */
+const TAP_CHARGE = 0.2;
 const rand = Math.random;
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 function gauss() {
@@ -540,9 +542,58 @@ export class Match {
       this.steer(p, p.lockFx * sp, p.lockFy * sp, dt, false);
     }
     if (!c.input.kick) {
-      this.humanKick(p, c.input.dx, c.input.dy, p.charge);
+      const tap = p.charge < TAP_CHARGE;
+      if (!(tap && this.smartPass(p, c.input.dx, c.input.dy))) this.humanKick(p, c.input.dx, c.input.dy, p.charge);
       p.charging = false;
     }
+  }
+
+  /**
+   * Quick tap: pass to the best-placed team-mate roughly the way you're facing (or pushing).
+   * Pass accuracy and weight depend on the passer's Passing skill. Returns false if nobody is there.
+   */
+  private smartPass(p: Player, ix: number, iy: number): boolean {
+    const kind = this.restart?.kind;
+    if (kind === 'kickoff') return false; // kick-off tap already plays it back
+    const k = resolveKick(p.lockFx, p.lockFy, ix, iy);
+    const opp = p.team.opp.players;
+    let best: Player | null = null;
+    let bestScore = Infinity;
+    for (const t of p.team.players) {
+      if (t === p || t.isKeeper) continue;
+      const tx = t.x + t.vx * 0.5 - p.x;
+      const ty = t.y + t.vy * 0.5 - p.y;
+      const d = Math.hypot(tx, ty);
+      if (d < 3 || d > (kind === 'throw' ? 22 : 40)) continue;
+      const ang = Math.acos(clamp((tx * k.dx + ty * k.dy) / d, -1, 1));
+      if (ang > 0.9) continue; // about 50 degrees either side
+      let lane = Infinity;
+      for (const o of opp) {
+        const u = clamp(((o.x - p.x) * tx + (o.y - p.y) * ty) / (d * d), 0, 1);
+        lane = Math.min(lane, Math.hypot(p.x + tx * u - o.x, p.y + ty * u - o.y));
+      }
+      const score = ang * 14 + d * 0.22 - Math.min(lane, 4) * 1.2;
+      if (score < bestScore) {
+        bestScore = score;
+        best = t;
+      }
+    }
+    if (!best) return false;
+    const tx = best.x + best.vx * 0.5;
+    const ty = best.y + best.vy * 0.5;
+    if (kind === 'throw') {
+      const dx = tx - p.x;
+      const dy = ty - p.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const sp = Math.min(15, 4 + d * 0.7);
+      this.kickBall(p, (dx / d) * sp, (dy / d) * sp, 3.2, 0.3);
+      return true;
+    }
+    const d = p.dist(tx, ty);
+    let lane = Infinity;
+    for (const o of opp) lane = Math.min(lane, o.dist((p.x + tx) / 2, (p.y + ty) / 2));
+    this.passTo(p, tx, ty, d > 26 || lane < 1.5, 3);
+    return true;
   }
 
   private humanKick(p: Player, ix: number, iy: number, power: number) {
@@ -715,11 +766,12 @@ export class Match {
   }
 
   /** Computer pass with a speed chosen to reach the target. */
-  passTo(p: Player, tx: number, ty: number, loft: boolean) {
+  passTo(p: Player, tx: number, ty: number, loft: boolean, errScale = 1) {
     const dx = tx - p.x;
     const dy = ty - p.y;
-    const d = Math.hypot(dx, dy) || 1;
-    const err = (gauss() * (100 - p.skills.passing) * 0.04 * Math.PI) / 180;
+    // weaker passers misjudge the weight as well as the line
+    const d = (Math.hypot(dx, dy) || 1) * (1 + gauss() * (100 - p.skills.passing) * 0.0015 * errScale);
+    const err = (gauss() * (100 - p.skills.passing) * 0.04 * errScale * Math.PI) / 180;
     const ang = Math.atan2(dy, dx) + err;
     if (loft) {
       const vz = 5 + d * 0.11;

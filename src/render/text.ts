@@ -8,20 +8,22 @@ function render(str: string, size: number, color: string): HTMLCanvasElement {
   const hit = cache.get(key);
   if (hit) return hit;
   if (cache.size > 400) cache.clear();
+  // Draw one character at a time on whole-pixel steps with a gap between letters,
+  // so they never smear into each other at any size.
   const c = document.createElement('canvas');
-  const g = c.getContext('2d')!;
-  g.font = `${size}px ${FONT}`;
-  const w = Math.max(1, Math.ceil(g.measureText(str).width));
-  c.width = w;
+  const gap = Math.max(1, Math.round(size / 8));
+  const step = size + gap;
+  const chars = [...str];
+  c.width = Math.max(1, chars.length * step - gap);
   c.height = size + 2;
   const g2 = c.getContext('2d')!;
   g2.font = `${size}px ${FONT}`;
   g2.textBaseline = 'top';
   g2.fillStyle = color;
-  g2.fillText(str, 0, 1);
+  chars.forEach((ch, i) => g2.fillText(ch, i * step, 1));
   const img = g2.getImageData(0, 0, c.width, c.height);
   const d = img.data;
-  for (let i = 3; i < d.length; i += 4) d[i] = d[i] > 110 ? 255 : 0;
+  for (let i = 3; i < d.length; i += 4) d[i] = d[i] > 128 ? 255 : 0;
   g2.putImageData(img, 0, 0);
   cache.set(key, c);
   return c;
