@@ -30,6 +30,8 @@ In 2-player mode player 1 uses WASD + Space + Left Shift and player 2 uses the a
 
 `npm run build` writes the static site to `dist/`.
 
+GitHub Pages: the workflow in `.github/workflows/pages.yml` builds and deploys on every push to `main`. In the repo's Settings → Pages, set Source to **GitHub Actions**.
+
 Cloudflare Pages settings: build command `npm run build`, output directory `dist`, Node 20 or newer.
 
 ## Art
