@@ -11,6 +11,7 @@ import {
   FORMATION,
   GOAL_H,
   GOAL_HALF,
+  KEEPER_SCALE,
   L,
   MID_Y,
   Player,
@@ -561,7 +562,8 @@ export class Match {
       this.kickBall(p, ax * sp, ay * sp, 5 + power * 6.5, power);
     } else {
       const sp = 6 + power * 22;
-      this.kickBall(p, ax * sp, ay * sp, power > 0.8 ? (power - 0.8) * 8 : 0, power);
+      // soft passes stay on the floor; harder ones lift off the ground
+      this.kickBall(p, ax * sp, ay * sp, power > 0.4 ? (power - 0.4) * 9 : 0, power);
     }
   }
 
@@ -898,7 +900,7 @@ export class Match {
     }
     if (p.dive > 0) {
       p.dive -= dt;
-      p.vy = p.diveDir * 8.5;
+      p.vy = p.diveDir * 8.5 * KEEPER_SCALE;
       p.vx *= 0.9;
       if (p.dive <= 0) p.stun = 0.45;
       return;
@@ -1043,7 +1045,7 @@ export class Match {
       if (p.cooldown > 0 || p.ignoreBall > 0 || (p.stun > 0 && p.dive <= 0)) continue;
       const d = Math.hypot(p.x - b.x, p.y - b.y);
       if (p.isKeeper && this.inBox(p.team, p.x, p.y)) {
-        const reach = p.dive > 0 ? 2.6 : 1.3;
+        const reach = (p.dive > 0 ? 2.6 : 1.3) * KEEPER_SCALE;
         if (d < reach && b.z < 2.7 && d < bestD) {
           best = p;
           bestD = d;
@@ -1120,7 +1122,7 @@ export class Match {
     };
     // a back pass or a gentle ball is simply gathered
     if (sp < 9) return catchIt();
-    const chance = clamp(0.5 + p.skills.keeping / 180 - (sp - 12) / 45, 0.12, 0.95);
+    const chance = clamp(0.62 + p.skills.keeping / 180 - (sp - 12) / 45, 0.12, 0.95);
     if (rand() < chance) {
       if (sp < 20 || rand() < 0.45) return catchIt();
       // parry

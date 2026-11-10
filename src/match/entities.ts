@@ -5,7 +5,9 @@ export const L = 105;
 export const W = 68;
 export const MID_Y = W / 2;
 /** Goals are drawn wider than real life (7.32m) so they suit the chunky players and the tilted view. */
-export const GOAL_HALF = 5.5;
+export const GOAL_HALF = 7;
+/** Keepers scale their reach with the goal so wider goals stay fair (1 = a 11m goal). */
+export const KEEPER_SCALE = GOAL_HALF / 5.5;
 export const GOAL_H = 2.44;
 export const BOX_DEPTH = 16.5;
 export const BOX_HALF = 20.16;
