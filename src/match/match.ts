@@ -42,6 +42,9 @@ interface Restart {
 const G = 9.8;
 /** Releasing kick before the power bar reaches this is a quick tap pass. */
 const TAP_CHARGE = 0.2;
+const CIRCLE_R = 9.15;
+/** How long a diving keeper stays down after the dive. */
+const DIVE_LAND = 0.3;
 const rand = Math.random;
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 function gauss() {
@@ -154,11 +157,16 @@ export class Match {
 
   // ------------------------------------------------------------------ restarts
 
-  startKickoff(team: Team) {
+  /** Set up a kick-off. After a goal (walk = true) the players jog back instead of jumping to their spots. */
+  startKickoff(team: Team, walk = false) {
     if (this.mode === 'practice') team = this.teams[0];
     this.ball.owner = null;
     this.ball.place(L / 2, MID_Y);
     for (const t of this.teams) {
+      if (walk) {
+        for (const p of t.players) p.stun = p.dive = p.hold = 0;
+        continue;
+      }
       for (const p of t.players) {
         const [fx, fy] = FORMATION[p.idx];
         let tx = Math.min(fx, p.idx >= 9 ? (t === team ? 50 : 42) : 46);
@@ -172,9 +180,11 @@ export class Match {
         p.charging = false;
       }
     }
-    const partner = team.players[10];
-    partner.x = L / 2 - team.dir * 0.5;
-    partner.y = MID_Y + 3;
+    if (!walk) {
+      const partner = team.players[10];
+      partner.x = L / 2 - team.dir * 0.5;
+      partner.y = MID_Y + 3;
+    }
     this.startRestart('kickoff', team, L / 2, MID_Y);
     sfx.whistle(false);
   }
@@ -208,6 +218,8 @@ export class Match {
     taker.vx = taker.vy = 0;
     taker.charging = false;
     taker.hold = 0;
+    taker.cooldown = 0;
+    taker.stun = 0;
     if (team.ctrl && kind !== 'goalkick') team.ctrl.controlled = taker;
   }
 
@@ -264,7 +276,7 @@ export class Match {
         this.updateLoose(dt, false);
         if (this.phaseT > 3.2) {
           const conceded = this.lastScorer ? this.lastScorer.team.opp : this.teams[0];
-          this.startKickoff(conceded);
+          this.startKickoff(conceded, true);
         }
         break;
       case 'halftime':
@@ -311,17 +323,60 @@ export class Match {
     this.ball.z = r.kind === 'throw' ? 2.0 : 0;
 
     for (const p of this.players) {
+      p.cooldown = Math.max(0, p.cooldown - dt);
+      p.kickAnim = Math.max(0, p.kickAnim - dt);
       if (p === taker) continue;
       if (p.human) this.humanMove(p, dt, false);
       else this.aiMove(p, dt);
       this.integrate(p, dt);
+      if (r.kind === 'kickoff' && p.human) this.keepOutAtKickoff(p, r);
     }
     this.separate();
 
+    let ready = true;
+    if (r.kind === 'kickoff') {
+      ready = this.kickoffReady(r);
+      // nobody should hold the game up for long
+      if (!ready && r.t > 8) {
+        for (const p of this.players) if (p !== taker) this.keepOutAtKickoff(p, r);
+        ready = true;
+      }
+    }
+    if (!ready) {
+      if (taker.human) taker.charging = false;
+      return;
+    }
     if (taker.human && r.t > 0.4) {
       this.humanKickInput(taker, dt);
     } else if (!taker.human && r.t > 1.1) {
       this.aiRestartKick(r);
+    }
+  }
+
+  /** Everyone in their own half, and the other side outside the centre circle. */
+  private kickoffReady(r: Restart) {
+    for (const p of this.players) {
+      if (p === r.taker) continue;
+      if ((p.x - L / 2) * p.team.dir > 0.05) return false;
+      if (p.team !== r.team && Math.hypot(p.x - r.x, p.y - r.y) < CIRCLE_R - 0.3) return false;
+    }
+    return true;
+  }
+
+  private keepOutAtKickoff(p: Player, r: Restart) {
+    const t = p.team;
+    p.x = t.dir > 0 ? Math.min(p.x, L / 2) : Math.max(p.x, L / 2);
+    if (t !== r.team) {
+      const dx = p.x - r.x;
+      const dy = p.y - r.y;
+      const d = Math.hypot(dx, dy);
+      if (d < CIRCLE_R) {
+        // slide round the circle edge, staying in our half
+        const ux = d > 0.01 && dx * t.dir < 0 ? dx / d : -t.dir;
+        const uy = d > 0.01 && dx * t.dir < 0 ? dy / d : 0;
+        p.x = r.x + ux * CIRCLE_R;
+        p.y = r.y + uy * CIRCLE_R;
+      }
     }
   }
 
@@ -373,7 +428,7 @@ export class Match {
       p.dive = Math.max(0, p.dive - dt);
       p.charging = false;
       if (p.human && this.phase === 'dead') this.humanMove(p, dt, false);
-      else this.aiMove(p, dt, this.phase !== 'dead');
+      else this.aiMove(p, dt, this.phase !== 'dead' && !(this.phase === 'goal' && this.phaseT > 1.5));
       this.integrate(p, dt);
     }
     this.separate();
@@ -403,9 +458,10 @@ export class Match {
     if (this.ball.owner === p) {
       const b = this.ball;
       if (p.isKeeper && p.hold > 0) {
+        p.x = clamp(p.x, 0.8, L - 0.8);
         b.x = p.x;
         b.y = p.y + 0.1;
-        b.z = 1.1;
+        b.z = p.dive > 0 ? 0.5 : 1.1;
       } else if (this.phase !== 'restart') {
         b.x = p.x + p.fx * 0.55;
         b.y = p.y + p.fy * 0.55;
@@ -476,11 +532,16 @@ export class Match {
         const dy = b.y - a.y;
         const d = Math.hypot(dx, dy);
         if (d > 0 && d < 0.7) {
-          const push = (0.7 - d) / 2;
-          a.x -= (dx / d) * push;
-          a.y -= (dy / d) * push;
-          b.x += (dx / d) * push;
-          b.y += (dy / d) * push;
+          // a keeper with the ball in his hands can't be barged about
+          const aFixed = a.isKeeper && a.hold > 0;
+          const bFixed = b.isKeeper && b.hold > 0;
+          const ka = aFixed ? 0 : bFixed ? 1 : 0.5;
+          const kb = 1 - ka;
+          const push = 0.7 - d;
+          a.x -= (dx / d) * push * ka;
+          a.y -= (dy / d) * push * ka;
+          b.x += (dx / d) * push * kb;
+          b.y += (dy / d) * push * kb;
         }
       }
   }
@@ -601,7 +662,13 @@ export class Match {
     const k = resolveKick(p.lockFx, p.lockFy, ix, iy);
     if (kind === 'throw') {
       const sp = 5 + power * 10;
-      const d = k.loft ? { dx: p.lockFx, dy: p.lockFy } : k;
+      const d = k.loft ? { dx: p.lockFx, dy: p.lockFy } : { dx: k.dx, dy: k.dy };
+      // a throw always goes some way into the pitch, never along or back over the line
+      const inward = p.y < MID_Y ? 1 : -1;
+      if (d.dy * inward < 0.4) {
+        d.dy = 0.4 * inward;
+        d.dx = Math.sign(d.dx || p.team.dir) * Math.sqrt(1 - 0.16);
+      }
       this.kickBall(p, d.dx * sp, d.dy * sp, 3 + power * 1.5, power * 0.5);
       return;
     }
@@ -668,7 +735,7 @@ export class Match {
     const c = p.team.ctrl!;
     if (!(c.input.kick && !c.prevKick)) return;
     const o = this.ball.owner;
-    if (o && o.team !== p.team && p.dist(o.x, o.y) < 2.0 && p.tackleT <= 0) {
+    if (o && o.team !== p.team && !(o.isKeeper && o.hold > 0) && p.dist(o.x, o.y) < 2.0 && p.tackleT <= 0) {
       // lunge into the tackle
       p.vx += p.fx * 3;
       p.vy += p.fy * 3;
@@ -837,7 +904,7 @@ export class Match {
         ty = r.y + (ty - r.y) * k;
       }
     }
-    if (r?.kind === 'kickoff') {
+    if (r?.kind === 'kickoff' || this.phase === 'goal') {
       // stay in own half
       wx = t.dir > 0 ? Math.min(wx, L / 2 - 1) : Math.max(wx, L / 2 + 1);
     }
@@ -1020,6 +1087,13 @@ export class Match {
     const gx = t.goalX;
     const dir = t.dir;
     if (p.hold > 0 && b.owner === p) {
+      // still on the floor after a diving catch
+      p.dive = Math.max(0, p.dive - dt);
+      if (p.dive > 0) {
+        p.vx *= 0.8;
+        p.vy *= 0.8;
+        return;
+      }
       this.steer(p, 0, 0, dt, false);
       p.hold -= dt;
       if (p.hold <= 0) this.keeperDistribute(p);
@@ -1027,9 +1101,10 @@ export class Match {
     }
     if (p.dive > 0) {
       p.dive -= dt;
-      p.vy = p.diveDir * 8.5 * KEEPER_SCALE;
+      if (p.dive > DIVE_LAND) p.vy = p.diveV;
+      else p.vy *= 0.75; // landed
       p.vx *= 0.9;
-      if (p.dive <= 0) p.stun = 0.45;
+      if (p.dive <= 0) p.stun = 0.25;
       return;
     }
     let tx = gx + dir * clamp(1 + Math.abs(b.x - gx) * 0.05, 1, 4.5);
@@ -1037,16 +1112,26 @@ export class Match {
     let sp = 4.5;
     const incoming = !b.owner && b.vx * dir < -6;
     if (incoming) {
-      const tt = (gx + dir * 0.6 - b.x) / b.vx;
-      if (tt > 0 && tt < 1.4) {
-        const yc = b.y + b.vy * tt;
-        if (Math.abs(yc - MID_Y) < GOAL_HALF + 1.5) {
+      // where the ball will cross the keeper's own line, not the goal line
+      const tt = (p.x - b.x) / b.vx;
+      const tg = (gx - b.x) / b.vx;
+      if (tt > -0.05 && tg < 1.4) {
+        const yc = b.y + b.vy * Math.max(0, tt);
+        const yg = b.y + b.vy * tg;
+        if (Math.abs(yg - MID_Y) < GOAL_HALF + 1.5) {
           ty = clamp(yc, MID_Y - GOAL_HALF - 0.5, MID_Y + GOAL_HALF + 0.5);
-          tx = gx + dir * 0.7;
+          tx = p.x;
           sp = 6.5;
-          if (tt < 0.45 && Math.abs(ty - p.y) > 1.1 && p.ignoreBall <= 0) {
-            p.dive = 0.4;
-            p.diveDir = Math.sign(ty - p.y);
+          const gap = ty - p.y;
+          // go as late as he can still get there, so he meets the ball at full stretch;
+          // better keepers get across quicker
+          const maxV = (7 + p.skills.keeping / 25) * KEEPER_SCALE;
+          const need = (Math.abs(gap) - 0.5) / maxV;
+          if (tt < Math.min(0.45, Math.max(0.2, need) + 0.12) && Math.abs(gap) > 0.9 * KEEPER_SCALE && p.ignoreBall <= 0) {
+            const fly = clamp(tt, 0.15, 0.45);
+            p.diveDir = Math.sign(gap);
+            p.diveV = p.diveDir * Math.min(maxV, Math.max(3, (Math.abs(gap) - 0.5) / fly));
+            p.dive = fly + DIVE_LAND;
           }
         }
       }
@@ -1172,7 +1257,8 @@ export class Match {
       if (p.cooldown > 0 || p.ignoreBall > 0 || (p.stun > 0 && p.dive <= 0)) continue;
       const d = Math.hypot(p.x - b.x, p.y - b.y);
       if (p.isKeeper && this.inBox(p.team, p.x, p.y)) {
-        const reach = (p.dive > 0 ? 2.6 : 1.3) * KEEPER_SCALE;
+        // a diving keeper reaches out with his hands; standing, the ball has to come near him
+        const reach = (p.dive > 0 ? 2.2 : 1.25) * KEEPER_SCALE;
         if (d < reach && b.z < 2.7 && d < bestD) {
           best = p;
           bestD = d;
@@ -1243,7 +1329,9 @@ export class Match {
       b.owner = p;
       b.lastTouch = p.team;
       p.hold = 1.4;
-      p.dive = 0;
+      // a diving catch: stay down with the ball for a moment
+      p.dive = p.dive > 0 ? Math.min(p.dive, DIVE_LAND) + 0.2 : 0;
+      p.vy *= 0.3;
       p.stun = 0;
       p.charging = false;
     };
@@ -1271,7 +1359,8 @@ export class Match {
     if (b.y < -0.15 || b.y > W + 0.15) {
       const team = last.opp;
       const x = clamp(b.x, 1, L - 1);
-      const y = b.y < 0 ? -0.3 : W + 0.3;
+      // the ball sits on the line (not outside it) so the throw doesn't count as out again
+      const y = b.y < 0 ? 0 : W;
       this.deadBall(() => this.startRestart('throw', team, x, y), 'THROW IN');
       return;
     }

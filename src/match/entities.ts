@@ -111,6 +111,7 @@ export class Player {
   hold = 0;
   dive = 0;
   diveDir = 0;
+  diveV = 0;
   ignoreBall = 0;
   tackleT = 0;
   // organic movement
