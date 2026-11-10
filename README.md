@@ -2,7 +2,7 @@
 
 A side-on, 11-a-side pixel-art football game for the browser, built around one-button directional passing: hold kick for power and let go, and the direction you hold picks the angle.
 
-This is the playable demo: one friendly between two national sides, 1 player vs CPU, 2 players, or CPU vs CPU.
+This is the playable demo: a friendly between two national sides (1 player vs CPU, 2 players, or CPU vs CPU), plus Practice, where your side plays against just a goalkeeper and every restart is yours.
 
 ## Play locally
 
