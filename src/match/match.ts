@@ -911,10 +911,17 @@ export class Match {
     return [wx, clamp(ty, 2, W - 2)];
   }
 
+  /** The keeper with the ball in his hands, if there is one. */
+  private keeperHolding(): Player | null {
+    const o = this.ball.owner;
+    return o && o.isKeeper && o.hold > 0 ? o : null;
+  }
+
   /** The player on this team who should chase a loose ball. */
   private chaser(t: Team): Player | null {
     const b = this.ball;
     if (b.owner && b.owner.team === t) return null;
+    if (this.keeperHolding()) return null; // give the keeper room
     if (this.phase !== 'play') return null;
     if (t.ctrl) return null;
     if (this.receiver && this.receiver.team === t) return null;
@@ -942,6 +949,13 @@ export class Match {
     if (this.phase !== 'play') {
       p.runT = 0;
       p.tgtX = NaN;
+    }
+    // the other side's keeper has it in his hands: back off to the edge of his box
+    const k = this.keeperHolding();
+    if (k && k.team !== p.team && this.inBox(k.team, tx, ty)) {
+      const kt = k.team;
+      tx = kt.goalX + kt.dir * (BOX_DEPTH + 1.5);
+      p.runT = 0;
     }
     const d = p.dist(tx, ty);
     const sprint = p.runT > 0 || (d > 10 && !relaxed);
@@ -1095,7 +1109,10 @@ export class Match {
         return;
       }
       this.steer(p, 0, 0, dt, false);
-      p.hold -= dt;
+      const crowded = p.team.opp.players.some((o) => !o.human && this.inBox(p.team, o.x, o.y));
+      // wait (up to a couple of seconds) for the attackers to clear his box
+      p.hold -= crowded && p.hold < 0.3 && p.holdWait < 2 ? 0 : dt;
+      if (crowded) p.holdWait += dt;
       if (p.hold <= 0) this.keeperDistribute(p);
       return;
     }
@@ -1149,6 +1166,8 @@ export class Match {
   private keeperDistribute(p: Player) {
     const best = this.bestPass(p, false);
     p.hold = 0;
+    // anyone loitering near him can't charge the clearance down
+    for (const o of p.team.opp.players) if (o.dist(p.x, p.y) < 7) o.ignoreBall = Math.max(o.ignoreBall, 0.6);
     if (best && best.d < 30 && best.lane > 2) {
       this.passTo(p, best.t.x, best.t.y, best.d > 22);
     } else {
@@ -1329,6 +1348,7 @@ export class Match {
       b.owner = p;
       b.lastTouch = p.team;
       p.hold = 1.4;
+      p.holdWait = 0;
       // a diving catch: stay down with the ball for a moment
       p.dive = p.dive > 0 ? Math.min(p.dive, DIVE_LAND) + 0.2 : 0;
       p.vy *= 0.3;
@@ -1337,7 +1357,7 @@ export class Match {
     };
     // a back pass or a gentle ball is simply gathered
     if (sp < 9) return catchIt();
-    const chance = clamp(0.62 + p.skills.keeping / 180 - (sp - 12) / 45, 0.12, 0.95);
+    const chance = clamp(0.45 + p.skills.keeping / 200 - (sp - 12) / 40, 0.1, 0.9);
     if (rand() < chance) {
       if (sp < 20 || rand() < 0.45) return catchIt();
       // parry

@@ -109,6 +109,7 @@ export class Player {
   lockFy = 0;
   decideT = 0;
   hold = 0;
+  holdWait = 0;
   dive = 0;
   diveDir = 0;
   diveV = 0;
