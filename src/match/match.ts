@@ -18,7 +18,7 @@ import {
   W,
 } from './entities';
 
-export type Mode = '1p' | '2p' | 'cpu';
+export type Mode = '1p' | '2p' | 'cpu' | 'practice';
 export type Phase = 'restart' | 'play' | 'dead' | 'goal' | 'halftime' | 'fulltime';
 export type RestartKind = 'kickoff' | 'throw' | 'corner' | 'goalkick';
 
@@ -92,6 +92,8 @@ export class Match {
   firstKickoff: Team;
   lastScorer: Player | null = null;
   lastKicker: Player | null = null;
+  /** Team-mate running onto the last pass. */
+  receiver: Player | null = null;
   mode: Mode;
 
   constructor(cfg: MatchConfig) {
@@ -116,18 +118,19 @@ export class Match {
       }
     }
     for (const t of this.teams) {
-      for (let i = 0; i < 11; i++) {
+      const n = cfg.mode === 'practice' && t === away ? 1 : 11;
+      for (let i = 0; i < n; i++) {
         const p = new Player(t, i, t.def.players[i]);
         t.players.push(p);
         this.players.push(p);
       }
     }
-    if (cfg.mode === '1p') home.ctrl = new Controller(0, 'solo', 0);
+    if (cfg.mode === '1p' || cfg.mode === 'practice') home.ctrl = new Controller(0, 'solo', 0);
     if (cfg.mode === '2p') {
       home.ctrl = new Controller(0, 'left', 0);
       away.ctrl = new Controller(1, 'right', 1);
     }
-    this.firstKickoff = rand() < 0.5 ? home : away;
+    this.firstKickoff = cfg.mode === 'practice' || rand() < 0.5 ? home : away;
     this.startKickoff(this.firstKickoff);
     sfx.setCrowd(0.06);
   }
@@ -149,6 +152,7 @@ export class Match {
   // ------------------------------------------------------------------ restarts
 
   startKickoff(team: Team) {
+    if (this.mode === 'practice') team = this.teams[0];
     this.ball.owner = null;
     this.ball.place(L / 2, MID_Y);
     for (const t of this.teams) {
@@ -173,10 +177,12 @@ export class Match {
   }
 
   startRestart(kind: RestartKind, team: Team, x: number, y: number) {
+    // in practice every throw-in and corner is yours
+    if (this.mode === 'practice' && kind !== 'goalkick') team = this.teams[0];
     let taker: Player;
     if (kind === 'kickoff') taker = team.players[9];
     else if (kind === 'goalkick') taker = team.players[0];
-    else taker = this.nearestOutfield(team, x, y);
+    else taker = this.nearestOutfield(team, x, y)!;
     this.restart = { kind, team, taker, x, y, t: 0 };
     this.phase = 'restart';
     this.phaseT = 0;
@@ -202,8 +208,8 @@ export class Match {
     if (team.ctrl && kind !== 'goalkick') team.ctrl.controlled = taker;
   }
 
-  nearestOutfield(team: Team, x: number, y: number, exclude?: Player | null): Player {
-    let best = team.players[1];
+  nearestOutfield(team: Team, x: number, y: number, exclude?: Player | null): Player | null {
+    let best: Player | null = null;
     let bd = Infinity;
     for (const p of team.players) {
       if (p.isKeeper || p === exclude) continue;
@@ -329,7 +335,10 @@ export class Match {
         this.integrate(p, dt);
         continue;
       }
-      if (p.human) {
+      if (this.receiver === p && !this.ball.owner && !(p.human && (p.team.ctrl!.input.dx || p.team.ctrl!.input.dy))) {
+        this.runOntoBall(p, dt);
+        if (p.human) this.humanDefend(p);
+      } else if (p.human) {
         const owns = this.ball.owner === p;
         if (owns) this.humanKickInput(p, dt);
         if (!p.charging) this.humanMove(p, dt, owns);
@@ -346,6 +355,7 @@ export class Match {
     }
     this.separate();
     this.stepBall(dt);
+    if (this.receiver && this.ball.speed < 0.3 && this.ball.z === 0) this.receiver = null;
     this.ballContacts();
     this.checkOut();
     this.updateCrowd();
@@ -471,6 +481,7 @@ export class Match {
     const px = b.x + b.vx * 0.35;
     const py = b.y + b.vy * 0.35;
     const best = this.nearestOutfield(t, px, py);
+    if (!best) return;
     const cur = c.controlled;
     if (!cur || cur.isKeeper || (best !== cur && best.dist(px, py) < cur.dist(px, py) - 2.5)) {
       if (cur) cur.charging = false;
@@ -524,10 +535,23 @@ export class Match {
       return;
     }
     const t = p.team;
+    if (kind === 'kickoff') {
+      // kick-off: tap to play it back to a midfielder, or pass the way you push
+      const il = Math.hypot(ix, iy);
+      if (il === 0) {
+        const mid = [t.players[6], t.players[7]].sort((a, b) => a.dist(p.x, p.y) - b.dist(p.x, p.y))[0];
+        this.passTo(p, mid.x, mid.y, false);
+        return;
+      }
+      const [ax, ay] = this.assist(p, ix / il, iy / il);
+      const sp = 6 + power * 18;
+      this.kickBall(p, ax * sp, ay * sp, 0, power);
+      return;
+    }
     const distGoal = Math.abs(t.attackGoalX - p.x);
     const wide = Math.abs(p.y - MID_Y);
-    if (kind !== 'kickoff' && kind !== 'corner' && distGoal < 34 && wide < 22 && k.dx * t.dir > 0.45) {
-      const aimY = MID_Y + (iy !== 0 ? iy * 2.9 : (rand() - 0.5) * 2.4);
+    if (kind !== 'corner' && distGoal < 34 && wide < 22 && k.dx * t.dir > 0.45) {
+      const aimY = MID_Y + (iy !== 0 ? iy * (GOAL_HALF - 1) : (rand() - 0.5) * 4);
       this.shoot(p, aimY, power, k.loft);
       return;
     }
@@ -572,7 +596,7 @@ export class Match {
     const c = p.team.ctrl!;
     if (!(c.input.kick && !c.prevKick)) return;
     const o = this.ball.owner;
-    if (o && o.team !== p.team && p.dist(o.x, o.y) < 1.7 && p.tackleT <= 0) {
+    if (o && o.team !== p.team && p.dist(o.x, o.y) < 2.0 && p.tackleT <= 0) {
       // lunge into the tackle
       p.vx += p.fx * 3;
       p.vy += p.fy * 3;
@@ -582,12 +606,14 @@ export class Match {
 
   // ------------------------------------------------------------------ kicking
 
-  kickBall(p: Player, vx: number, vy: number, vz: number, power: number) {
+  kickBall(p: Player, vx: number, vy: number, vz: number, power: number, shot = false) {
     const b = this.ball;
     b.owner = null;
     b.vx = vx;
     b.vy = vy;
     b.vz = vz;
+    this.receiver = shot ? null : this.pickReceiver(p);
+    if (this.receiver && p.team.ctrl) p.team.ctrl.controlled = this.receiver;
     b.lastTouch = p.team;
     p.cooldown = 0.35;
     p.kickAnim = 0.25;
@@ -600,6 +626,53 @@ export class Match {
       this.phaseT = 0;
       this.restart = null;
     }
+  }
+
+  /** Where p can first meet the loose ball, and how long that takes. */
+  intercept(p: Player): { x: number; y: number; t: number } {
+    const b = this.ball;
+    let x = b.x;
+    let y = b.y;
+    let z = b.z;
+    let vx = b.vx;
+    let vy = b.vy;
+    let vz = b.vz;
+    const sp = p.topSpeed(true, false);
+    const dt = 0.1;
+    for (let t = 0; t <= 3; t += dt) {
+      if (z <= 1.6 && p.dist(x, y) / sp <= t + 0.15) return { x, y, t };
+      x += vx * dt;
+      y += vy * dt;
+      if (z > 0 || vz > 0) {
+        vz -= G * dt;
+        z = Math.max(0, z + vz * dt);
+        if (z === 0) vz = 0;
+      } else {
+        const f = Math.exp(-0.85 * dt);
+        vx *= f;
+        vy *= f;
+      }
+    }
+    return { x, y, t: 9 };
+  }
+
+  private pickReceiver(kicker: Player): Player | null {
+    let best: Player | null = null;
+    let bt = 2.8;
+    for (const m of kicker.team.players) {
+      if (m === kicker || m.isKeeper) continue;
+      const i = this.intercept(m);
+      if (i.t < bt) {
+        bt = i.t;
+        best = m;
+      }
+    }
+    return best;
+  }
+
+  private runOntoBall(p: Player, dt: number) {
+    const i = this.intercept(p);
+    this.moveTo(p, i.x, i.y, p.topSpeed(p.dist(i.x, i.y) > 3, false), dt);
   }
 
   private pressure(p: Player): number {
@@ -617,7 +690,7 @@ export class Match {
     const sp = chip ? 11 + power * 7 : 15 + power * 17;
     let vz = chip ? 5.5 + power * 2.5 : 0.8 + power * 2.2 + gauss() * power * (1.2 + (100 - sk) / 45);
     vz = Math.max(0.2, vz);
-    this.kickBall(p, Math.cos(ang) * sp, Math.sin(ang) * sp, vz, Math.max(0.5, power));
+    this.kickBall(p, Math.cos(ang) * sp, Math.sin(ang) * sp, vz, Math.max(0.5, power), true);
   }
 
   /** Computer pass with a speed chosen to reach the target. */
@@ -704,6 +777,7 @@ export class Match {
     if (b.owner && b.owner.team === t) return null;
     if (this.phase !== 'play') return null;
     if (t.ctrl) return null;
+    if (this.receiver && this.receiver.team === t) return null;
     const px = b.x + b.vx * 0.4;
     const py = b.y + b.vy * 0.4;
     return this.nearestOutfield(t, px, py);
@@ -736,12 +810,12 @@ export class Match {
     if (!o || o.team === p.team || p.tackleT > 0) return;
     if (o.isKeeper && o.hold > 0) return;
     if (p.dist(o.x, o.y) > 1.25) return;
-    if (rand() < dt * 1.7 * (p.skills.tackling / 80)) this.tackle(p, o);
+    if (rand() < dt * (o.human ? 0.9 : 1.7) * (p.skills.tackling / 80)) this.tackle(p, o);
   }
 
   private tackle(p: Player, o: Player) {
     p.tackleT = 0.8;
-    const chance = clamp(0.3 + p.skills.tackling / 220 - o.skills.pace / 500 + (o.charging ? 0.1 : 0), 0.2, 0.8);
+    const chance = clamp(0.3 + p.skills.tackling / 220 - o.skills.pace / 500 + (o.charging ? 0.1 : 0) + (p.human ? 0.2 : 0) - (o.human ? 0.1 : 0), 0.2, 0.9);
     if (rand() < chance) {
       const b = this.ball;
       b.owner = null;
@@ -770,7 +844,7 @@ export class Match {
     if (p.decideT <= 0 && p.cooldown <= 0) {
       p.decideT = 0.15 + rand() * 0.2;
       if (toGoal < 25 && wide < 15 && (toGoal < 17 || rand() < 0.2 || pr < 1.8)) {
-        this.shoot(p, MID_Y + (rand() * 2 - 1) * 2.8, 0.55 + rand() * 0.4, false);
+        this.shoot(p, MID_Y + (rand() * 2 - 1) * (GOAL_HALF - 1.2), 0.55 + rand() * 0.4, false);
         return;
       }
       if (toGoal < 22 && wide >= 15 && rand() < 0.45) {
@@ -824,7 +898,7 @@ export class Match {
     }
     if (p.dive > 0) {
       p.dive -= dt;
-      p.vy = p.diveDir * 7;
+      p.vy = p.diveDir * 8.5;
       p.vx *= 0.9;
       if (p.dive <= 0) p.stun = 0.45;
       return;
@@ -849,7 +923,7 @@ export class Match {
       }
     } else if (!b.owner && this.inBox(t, b.x, b.y) && b.speed < 12) {
       const opp = this.nearestOutfield(t.opp, b.x, b.y);
-      if (p.dist(b.x, b.y) < opp.dist(b.x, b.y) + 2) {
+      if (!opp || p.dist(b.x, b.y) < opp.dist(b.x, b.y) + 2) {
         tx = b.x;
         ty = b.y;
         sp = 6;
@@ -969,7 +1043,7 @@ export class Match {
       if (p.cooldown > 0 || p.ignoreBall > 0 || (p.stun > 0 && p.dive <= 0)) continue;
       const d = Math.hypot(p.x - b.x, p.y - b.y);
       if (p.isKeeper && this.inBox(p.team, p.x, p.y)) {
-        const reach = p.dive > 0 ? 1.9 : 1.0;
+        const reach = p.dive > 0 ? 2.6 : 1.3;
         if (d < reach && b.z < 2.7 && d < bestD) {
           best = p;
           bestD = d;
@@ -977,7 +1051,7 @@ export class Match {
         }
         continue;
       }
-      if (b.z < 0.9 && d < 0.75 && d < bestD) {
+      if (b.z < 0.9 && d < (b.speed < 12 ? 1.0 : 0.75) && d < bestD) {
         best = p;
         bestD = d;
         kind = 'control';
@@ -1003,6 +1077,7 @@ export class Match {
     }
     b.owner = p;
     b.lastTouch = p.team;
+    this.receiver = null;
     p.decideT = 0.1 + rand() * 0.15;
     if (p.team.ctrl && !p.isKeeper) p.team.ctrl.controlled = p;
   }
@@ -1024,7 +1099,7 @@ export class Match {
     const gx = t.attackGoalX;
     const sp = 8 + p.skills.heading / 12;
     if (Math.abs(gx - p.x) < 20 && Math.abs(p.y - MID_Y) < 14) {
-      const ang = Math.atan2(MID_Y + (rand() * 2 - 1) * 2.5 - p.y, gx - p.x) + gauss() * 0.08;
+      const ang = Math.atan2(MID_Y + (rand() * 2 - 1) * (GOAL_HALF - 1) - p.y, gx - p.x) + gauss() * 0.08;
       this.kickBall(p, Math.cos(ang) * sp, Math.sin(ang) * sp, 0.6, 0.5);
     } else {
       const ang = Math.atan2((rand() - 0.5) * 1.2, t.dir);
@@ -1099,6 +1174,7 @@ export class Match {
   }
 
   private deadBall(next: () => void, label: string) {
+    this.receiver = null;
     this.phase = 'dead';
     this.phaseT = 0;
     this.pending = next;
@@ -1107,6 +1183,7 @@ export class Match {
   }
 
   private goal(team: Team) {
+    this.receiver = null;
     team.score++;
     this.lastScorer = this.lastKicker && this.lastKicker.team === team ? this.lastKicker : team.players[9];
     this.phase = 'goal';

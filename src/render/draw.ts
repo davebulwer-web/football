@@ -128,7 +128,7 @@ function drawStadium(ctx: CanvasRenderingContext2D, cam: Camera, excite: number,
   // advertising boards along the far touchline
   const by = -2.4;
   const segW = 15;
-  const top = Math.round(project(cam, 0, by, 1.45).y);
+  const top = Math.round(project(cam, 0, by, 0.85).y);
   const bot = Math.round(project(cam, 0, by, 0).y);
   const h = bot - top;
   const s = scaleAt(by);
@@ -209,14 +209,14 @@ function drawPitch(ctx: CanvasRenderingContext2D, cam: Camera) {
 function spot(ctx: CanvasRenderingContext2D, cam: Camera, x: number, y: number) {
   const p = project(cam, x, y);
   ctx.fillStyle = LINE;
-  ctx.fillRect(Math.round(p.x) - 1, Math.round(p.y), 2, 1);
+  ctx.fillRect(Math.round(p.x) - 1, Math.round(p.y), 3, 1);
 }
 
 function drawFlags(ctx: CanvasRenderingContext2D, cam: Camera, nearSide: boolean) {
   for (const x of [0, PITCH_L]) {
     const y = nearSide ? PITCH_W : 0;
     const b = project(cam, x, y);
-    const t = project(cam, x, y, 1.5);
+    const t = project(cam, x, y, 0.9);
     line(ctx, b.x, b.y, t.x, t.y, '#f2f2f2');
     ctx.fillStyle = '#f2cc1c';
     ctx.fillRect(Math.round(t.x) + 1, Math.round(t.y), 4, 3);

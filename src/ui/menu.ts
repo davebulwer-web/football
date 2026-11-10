@@ -53,7 +53,7 @@ export class Menu {
         { label: () => 'FRIENDLY', select: () => this.go('friendly') },
         soon('LEAGUE'),
         soon('CUP'),
-        soon('PRACTICE'),
+        { label: () => 'PRACTICE', select: () => this.startPractice() },
         soon('PENALTIES'),
         soon('TEAM EDITOR'),
         { label: () => 'CONTROLS', select: () => this.go('controls') },
@@ -107,6 +107,11 @@ export class Menu {
     });
   }
 
+  private startPractice() {
+    const away = this.home === this.away ? (this.away + 1) % TEAMS.length : this.away;
+    this.onStart({ home: TEAMS[this.home], away: TEAMS[away], mode: 'practice', halfSeconds: 99999 });
+  }
+
   reset() {
     this.armed = false;
   }
@@ -151,6 +156,14 @@ export class Menu {
   }
 
   draw(ctx: CanvasRenderingContext2D) {
+    this.drawBackdrop(ctx);
+    if (this.screen === 'main') {
+      drawText(ctx, `PRACTICE: ${TEAMS[this.home].name.toUpperCase()} VS A KEEPER`, VW / 2, VH - 30, '#6a7080', 'center');
+    }
+    this.drawBody(ctx);
+  }
+
+  private drawBackdrop(ctx: CanvasRenderingContext2D) {
     // backdrop: grass stripes and a stand
     for (let i = 0; i < 12; i++) {
       ctx.fillStyle = i % 2 ? '#3f8f3a' : '#4a9c42';
@@ -161,7 +174,9 @@ export class Menu {
     const bob = Math.round(Math.sin(this.t * 2) * 2);
     drawText(ctx, 'TOUCHLINE', VW / 2, 22 + bob, '#f2cc1c', 'center', 32, '#7a3a10');
     drawText(ctx, 'INTERNATIONAL FOOTBALL', VW / 2, 62, '#ffffff', 'center', 8);
+  }
 
+  private drawBody(ctx: CanvasRenderingContext2D) {
     if (this.screen === 'controls') return this.drawControls(ctx);
 
     const items = this.items();

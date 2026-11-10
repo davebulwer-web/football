@@ -16,6 +16,8 @@ export const S_FAR = 8.2;
 export const S_NEAR = 11;
 
 const VY = (NEAR_Y - FAR_Y) / PITCH_W;
+/** Height exaggeration so goals and lofted balls match the size of the players. */
+const Z_SCALE = 1.45;
 
 export class Camera {
   x = PITCH_L / 2;
@@ -37,5 +39,5 @@ export interface Pt {
 
 export function project(cam: Camera, x: number, y: number, z = 0): Pt {
   const s = scaleAt(y);
-  return { x: VW / 2 + (x - cam.x) * s, y: FAR_Y + y * VY - z * s * 0.85 };
+  return { x: VW / 2 + (x - cam.x) * s, y: FAR_Y + y * VY - z * s * Z_SCALE };
 }
